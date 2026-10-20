@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "nvk_bootstrap",
+  "version": "0.3.0",
+  "name": "NVK Bootstrap",
+  "description": "Routes actual Vulkan calls to NVK and actual OpenGL contexts through bundled Zink on macOS x86_64.",
+  "environment": "client",
+  "license": "LicenseRef-Local-Prototype",
+  "languageAdapters": {
+    "nvkbootstrap": "local.nvk.NvkLanguageAdapter"
+  },
+  "entrypoints": {
+    "preLaunch": [
+      {
+        "adapter": "nvkbootstrap",
+        "value": "local.nvk.NvkPreLaunch"
+      }
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "*",
+    "java": ">=17"
+  },
+  "breaks": {
+    "local_zink_bootstrap": "*"
+  }
+}

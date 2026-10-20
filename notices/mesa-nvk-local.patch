@@ -1,0 +1,103 @@
+--- a/src/egl/drivers/dri2/platform_surfaceless.c
++++ b/src/egl/drivers/dri2/platform_surfaceless.c
+@@ -418,3 +418,35 @@
+ cleanup:
+    return _eglError(EGL_NOT_INITIALIZED, err);
+ }
++
++#include "eglcurrent.h"
++#include "eglcontext.h"
++#include "dri_drawable.h"
++#include "gallium/drivers/zink/zink_types.h"
++#include "mc_zink_image.h"
++__attribute__((visibility("default"))) int mc_zink_current_image(MCZinkImage*out)
++{
++   _EGLContext *context=_eglGetCurrentContext();
++   if(!context||!context->DrawSurface||!out)return 0;
++   struct dri2_egl_surface *surface=dri2_egl_surface(context->DrawSurface);
++   struct pipe_resource *pr=surface->dri_drawable?surface->dri_drawable->textures[ST_ATTACHMENT_FRONT_LEFT]:NULL;
++   if(!pr&&surface->front)pr=surface->front->texture;
++   if(!pr||!pr->screen||strncmp(pr->screen->get_name(pr->screen),"zink",4))return 0;
++   struct zink_resource *resource=(struct zink_resource*)pr;
++   struct zink_screen *screen=(struct zink_screen*)pr->screen;
++   if(!resource->obj||!resource->obj->image)return 0;
++   *out=(MCZinkImage){.device=(uintptr_t)screen->dev,.queue=(uintptr_t)screen->queue,.image=(uint64_t)resource->obj->image,
++      .usage=resource->obj->vkusage,.family=screen->gfx_queue,.width=pr->width0,.height=pr->height0,.format=resource->format,.layout=resource->layout};
++   return 1;
++}
++__attribute__((visibility("default"))) int mc_zink_present_current(MCZinkPresent present,void*layer)
++{
++   MCZinkImage info;if(!present||!mc_zink_current_image(&info))return -1;
++   _EGLContext *context=_eglGetCurrentContext();
++   struct dri2_egl_surface *surface=dri2_egl_surface(context->DrawSurface);
++   struct pipe_resource *pr=surface->dri_drawable->textures[ST_ATTACHMENT_FRONT_LEFT];
++   if(!pr&&surface->front)pr=surface->front->texture;
++   struct zink_screen *screen=(struct zink_screen*)pr->screen;
++   simple_mtx_lock(screen->queue_lock);int result=present(&info,layer);simple_mtx_unlock(screen->queue_lock);
++   return result;
++}
+--- a/src/egl/meson.build
++++ b/src/egl/meson.build
+@@ -15,7 +15,7 @@
+   link_for_egl += libgallium_wgl
+ endif
+ deps_for_egl = []
+-incs_for_egl = [inc_include, inc_src, inc_egl]
++incs_for_egl = [inc_include, inc_src, inc_egl, inc_vulkan_util, include_directories('../compiler'), include_directories('../gallium/drivers/zink'), include_directories('../../../')]
+ 
+ files_egl = files(
+   'main/eglapi.c',
+--- a/src/gallium/drivers/zink/zink_instance.py
++++ b/src/gallium/drivers/zink/zink_instance.py
+@@ -80,7 +80,7 @@
+ 
+ #include <vulkan/vulkan_core.h>
+ 
+-#ifdef __APPLE__
++#if defined(__APPLE__) && !defined(MC_ZINK_NATIVE_NVK)
+ #include "MoltenVK/mvk_vulkan.h"
+ // Source of MVK_VERSION
+ #include "MoltenVK/mvk_config.h"
+@@ -252,7 +252,7 @@
+ 
+    VkInstanceCreateInfo ici = {0};
+    ici.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+-#ifdef __APPLE__
++#if defined(__APPLE__) && !defined(MC_ZINK_NATIVE_NVK)
+    ici.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+ #endif
+    ici.pApplicationInfo = &ai;
+--- a/src/gallium/drivers/zink/zink_resource.c
++++ b/src/gallium/drivers/zink/zink_resource.c
+@@ -60,7 +60,7 @@
+ #define DRM_FORMAT_MOD_LINEAR 0
+ #endif
+ 
+-#ifdef __APPLE__
++#if defined(__APPLE__) && !defined(MC_ZINK_NATIVE_NVK)
+ #include "MoltenVK/mvk_vulkan.h"
+ // Source of MVK_VERSION
+ #include "MoltenVK/mvk_config.h"
+--- a/src/gallium/drivers/zink/zink_screen.c
++++ b/src/gallium/drivers/zink/zink_screen.c
+@@ -80,7 +80,7 @@
+ #endif
+ #endif
+ 
+-#ifdef __APPLE__
++#if defined(__APPLE__) && !defined(MC_ZINK_NATIVE_NVK)
+ #include "MoltenVK/mvk_vulkan.h"
+ // Source of MVK_VERSION
+ #include "MoltenVK/mvk_config.h"
+
+--- a/src/gallium/drivers/zink/zink_screen.c
++++ b/src/gallium/drivers/zink/zink_screen.c
+@@ -3254,2 +3254,8 @@
+    if (!screen->resizable_bar)
+       screen->info.have_EXT_host_image_copy = false;
++
++#ifdef MC_ZINK_NATIVE_NVK
++   if (zink_driverid(screen) == VK_DRIVER_ID_MESA_NVK &&
++       !debug_get_bool_option("MC_ZINK_HOST_IMAGE_COPY", false))
++      screen->info.have_EXT_host_image_copy = false;
++#endif

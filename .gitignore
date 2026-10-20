@@ -1,0 +1,29 @@
+# Generated builds and distribution artifacts
+/build/
+/dist/
+*.class
+*.jar
+*.dylib
+
+# Local binary inputs and downloaded build dependencies
+/vendor/payload/
+/vendor/compile/
+/vendor/runtime/
+
+# Local test fixtures and evidence can contain game data, logs, screenshots,
+# launcher commands, and machine-specific paths.
+/tests/
+/reference/
+/backups/
+/installation-backup/
+/installation*.json
+/build-*.log
+/*installer*.jar.log
+/neoforge-installer.jar.log
+
+# macOS and editor files
+.DS_Store
+._*
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,18 @@
+{
+  "Mesa_source": "https://codeload.github.com/chaotic-cx/mesa-mirror/tar.gz/17ca6174",
+  "Mesa_version": "26.3.0-devel",
+  "GLFW_source": "https://github.com/glfw/glfw/tree/3.4",
+  "gallium_drivers": [
+    "zink"
+  ],
+  "Vulkan_backend": "Mesa NVK (Nouveau Vulkan driver)",
+  "system_driver_modified": false,
+  "Minecraft_main": "net.minecraft.client.main.Main",
+  "MCZinkImage_header": "src/main/native/mc_zink_image.h (expose as mc_zink_image.h when applying the Mesa patch)",
+  "OpenGL_entry": "Mach-O GL symbol resolvers / OSMesaGetProcAddress -> Mesa EGL",
+  "LWJGL2_entry": "RegisterNatives for GLContext and MacOSXContextImplementation",
+  "LWJGL2_source": "https://github.com/LWJGL/lwjgl",
+  "OpenGL_registry": "https://github.com/KhronosGroup/OpenGL-Registry/blob/main/xml/gl.xml",
+  "OpenGL_registry_sha256": "b9ca2cfa5c676e901c20d34af3407f1687cde0f1336a5ff7a8974d04c7494ad3",
+  "NVK_host_image_copy": "disabled in bundled Zink by default for MC_ZINK_NATIVE_NVK builds; MC_ZINK_HOST_IMAGE_COPY=true re-enables for diagnosis"
+}

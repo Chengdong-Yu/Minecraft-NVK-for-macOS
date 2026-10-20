@@ -1,0 +1,72 @@
+--- a/src/egl_context.c
++++ b/src/egl_context.c
+@@ -134,7 +134,7 @@
+             continue;
+ 
+         // Only consider window EGLConfigs
+-        if (!(getEGLConfigAttrib(n, EGL_SURFACE_TYPE) & EGL_WINDOW_BIT))
++        if (!(getEGLConfigAttrib(n, EGL_SURFACE_TYPE) & (getenv("MC_ZINK_EGL")?0x0001:EGL_WINDOW_BIT)))
+             continue;
+ 
+ #if defined(_GLFW_X11)
+@@ -286,6 +286,7 @@
+     }
+ #endif
+ 
++    if(getenv("MC_ZINK_EGL")){extern void _glfwZinkPresent(_GLFWwindow*);_glfwZinkPresent(window);return;}
+     eglSwapBuffers(_glfw.egl.display, window->context.egl.surface);
+ }
+ 
+@@ -487,7 +488,7 @@
+             eglGetProcAddress("eglCreatePlatformWindowSurfaceEXT");
+     }
+ 
+-    _glfw.egl.platform = _glfw.platform.getEGLPlatform(&attribs);
++    _glfw.egl.platform = getenv("MC_ZINK_EGL")?0x31dd:_glfw.platform.getEGLPlatform(&attribs);
+     if (_glfw.egl.platform)
+     {
+         _glfw.egl.display =
+@@ -710,6 +711,13 @@
+ 
+     SET_ATTRIB(EGL_NONE, EGL_NONE);
+ 
++    if(getenv("MC_ZINK_EGL")){
++        typedef EGLSurface(*Create)(EGLDisplay,EGLConfig,const EGLint*);
++        Create create=(void*)_glfwPlatformGetModuleSymbol(_glfw.egl.handle,"eglCreatePbufferSurface");
++        int width,height;_glfw.platform.getFramebufferSize(window,&width,&height);
++        EGLint size[]={0x3057,width>0?width:1,0x3056,height>0?height:1,EGL_NONE};
++        window->context.egl.surface=create(_glfw.egl.display,config,size);
++    }else{
+     native = _glfw.platform.getEGLNativeWindow(window);
+     // HACK: ANGLE does not implement eglCreatePlatformWindowSurfaceEXT
+     //       despite reporting EGL_EXT_platform_base
+@@ -724,6 +732,7 @@
+             eglCreateWindowSurface(_glfw.egl.display, config, native, attribs);
+     }
+ 
++    }
+     if (window->context.egl.surface == EGL_NO_SURFACE)
+     {
+         _glfwInputError(GLFW_PLATFORM_ERROR,
+--- a/src/window.c
++++ b/src/window.c
+@@ -204,6 +204,7 @@
+ 
+     fbconfig  = _glfw.hints.framebuffer;
+     ctxconfig = _glfw.hints.context;
++    if(getenv("MC_ZINK_EGL"))ctxconfig.source=GLFW_EGL_CONTEXT_API;
+     wndconfig = _glfw.hints.window;
+ 
+     wndconfig.width   = width;
+@@ -480,8 +481,10 @@
+ 
+     // The window's context must not be current on another thread when the
+     // window is destroyed
+-    if (window == _glfwPlatformGetTls(&_glfw.contextSlot))
++    if (window == _glfwPlatformGetTls(&_glfw.contextSlot)){
++        if(getenv("MC_ZINK_EGL")){extern void _glfwZinkRelease(_GLFWwindow*);_glfwZinkRelease(window);}
+         glfwMakeContextCurrent(NULL);
++    }
+ 
+     _glfw.platform.destroyWindow(window);
+ 
