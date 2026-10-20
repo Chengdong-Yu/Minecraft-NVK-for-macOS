@@ -9,20 +9,23 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.DirectoryStream;
 import java.security.MessageDigest;
 import java.io.ByteArrayOutputStream;
 import java.nio.file.Paths;
 import java.util.Locale;
 import java.util.Properties;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 final class NvkBootstrap {
     private static final String PAYLOAD = "/payload/macos-x86_64/";
-    private static final String DRIVER = "/Library/GPUBundles/nvmtl/libvulkan_nouveau.dylib";
     private static boolean prepared;
     private static boolean active;
     private static String loader;
     private static Path runtime;
     private static Path game;
+    private static Path driverLibrary;
 
     static synchronized void prepare(Path gameDirectory, Path configDirectory, boolean client, String loaderName) {
         if (prepared) return;
@@ -49,13 +52,13 @@ final class NvkBootstrap {
             if (!settings.getProperty("mode", "auto").equals("auto")) {
                 System.err.println("[NVK-BOOTSTRAP] Legacy mode setting ignored; the actual graphics API selects the route");
             }
-            if (!Files.isRegularFile(Paths.get(DRIVER))) {
-                throw new IllegalStateException("NullMoth NVIDIA/NVK driver is required: " + DRIVER);
-            }
+            driverLibrary = resolveDriver(settings);
+            Path icd = resolveIcd(settings, driverLibrary);
             runtime = extract();
             System.load(runtime.resolve("libNvkBootstrap.dylib").toString());
             NativeEnvironment.checkEarlyWindowLibraries();
-            String driver = NativeEnvironment.checkDriver(DRIVER);
+            NativeEnvironment.set("MC_NVK_DRIVER", driverLibrary.toString());
+            String driver = NativeEnvironment.checkDriver(driverLibrary.toString());
             String presenter = runtime.resolve("libvulkan.1.dylib").toString();
             NativeEnvironment.set("MESA_SHADER_CACHE_DIR", game.resolve(".nvk-bootstrap/shader-cache").toString());
             NativeEnvironment.set("MC_GRAPHICS_AUDIT", Boolean.parseBoolean(settings.getProperty("audit", "false")) ? "1" : "0");
@@ -71,7 +74,7 @@ final class NvkBootstrap {
             NativeEnvironment.set("MC_SDL_ORIGINAL", runtime.resolve("libSDL3_original.dylib").toString());
             NativeEnvironment.set("MC_ROUTE_STATUS_FILE", game.resolve(".nvk-bootstrap/renderer-route.properties").toString());
             NativeEnvironment.set("SDL_VULKAN_LIBRARY", presenter);
-            NativeEnvironment.set("VK_ICD_FILENAMES", "/Library/GPUBundles/nvmtl/nvk_icd.json");
+            NativeEnvironment.set("VK_ICD_FILENAMES", icd.toString());
             System.setProperty("org.lwjgl.opengl.explicitInit", "false");
             System.setProperty("org.lwjgl.opengl.libname", runtime.resolve("libGLZink.dylib").toString());
             System.setProperty("org.lwjgl.glfw.libname", runtime.resolve("libglfwZink.dylib").toString());
@@ -96,10 +99,72 @@ final class NvkBootstrap {
             try (InputStream in = Files.newInputStream(config)) { properties.load(in); }
         } else {
             Files.createDirectories(config.getParent());
-            Files.write(config, ( "# NVK Bootstrap: macOS x86_64 with NullMoth NVIDIA driver\n" +
-                    "enabled=true\naudit=false\n").getBytes(StandardCharsets.UTF_8), StandardOpenOption.CREATE_NEW);
+            Files.write(config, ("# NVK Bootstrap: macOS x86_64 with NullMoth NVIDIA driver\n" +
+                    "enabled=true\naudit=false\ndriverLibrary=\nicdFile=\n")
+                    .getBytes(StandardCharsets.UTF_8), StandardOpenOption.CREATE_NEW);
         }
         return properties;
+    }
+
+    private static Path configuredPath(Properties settings, String key, String environment) {
+        String value = settings.getProperty(key);
+        if (value == null || value.trim().isEmpty()) value = System.getenv(environment);
+        if (value == null || value.trim().isEmpty()) return null;
+        return Paths.get(value.trim()).toAbsolutePath().normalize();
+    }
+
+    private static Path resolveDriver(Properties settings) throws IOException {
+        Path configured = configuredPath(settings, "driverLibrary", "MC_NVK_DRIVER");
+        if (configured != null) {
+            if (Files.isRegularFile(configured)) return configured.toRealPath();
+            throw new IOException("NVK driver library configured by driverLibrary/MC_NVK_DRIVER was not found");
+        }
+        Path icd = configuredPath(settings, "icdFile", "VK_ICD_FILENAMES");
+        if (icd == null) icd = configuredPath(settings, "icdFile", "VK_DRIVER_FILES");
+        if (icd != null) return driverFromIcd(icd);
+
+        Path home = Paths.get(System.getProperty("user.home")).toAbsolutePath();
+        Path root = home.getRoot();
+        Path[] bundleRoots = new Path[] {
+                root == null ? null : root.resolve("Library").resolve("GPUBundles"),
+                home.resolve("Library").resolve("GPUBundles")
+        };
+        for (Path bundleRoot : bundleRoots) {
+            if (bundleRoot == null || !Files.isDirectory(bundleRoot)) continue;
+            Path direct = bundleRoot.resolve("libvulkan_nouveau.dylib");
+            if (Files.isRegularFile(direct)) return direct.toRealPath();
+            try (DirectoryStream<Path> bundles = Files.newDirectoryStream(bundleRoot)) {
+                for (Path bundle : bundles) {
+                    Path candidate = bundle.resolve("libvulkan_nouveau.dylib");
+                    if (Files.isRegularFile(candidate)) return candidate.toRealPath();
+                }
+            }
+        }
+        throw new IOException("NullMoth NVIDIA/NVK driver not found. Set driverLibrary in nvk-bootstrap.properties or MC_NVK_DRIVER.");
+    }
+
+    private static Path driverFromIcd(Path icd) throws IOException {
+        if (!Files.isRegularFile(icd)) throw new IOException("Vulkan ICD manifest configured by icdFile was not found");
+        String json = new String(Files.readAllBytes(icd), StandardCharsets.UTF_8);
+        Matcher matcher = Pattern.compile("\\\"library_path\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"").matcher(json);
+        if (!matcher.find()) throw new IOException("Vulkan ICD manifest has no library_path");
+        String library = matcher.group(1).replace("\\\\", "\\").replace("\\/", "/");
+        Path path = Paths.get(library);
+        if (!path.isAbsolute()) path = icd.getParent().resolve(path);
+        if (!Files.isRegularFile(path)) throw new IOException("Vulkan ICD manifest references a missing driver library");
+        return path.toRealPath();
+    }
+
+    private static Path resolveIcd(Properties settings, Path driver) throws IOException {
+        Path configured = configuredPath(settings, "icdFile", "VK_ICD_FILENAMES");
+        if (configured == null) configured = configuredPath(settings, "icdFile", "VK_DRIVER_FILES");
+        if (configured != null) {
+            if (Files.isRegularFile(configured)) return configured.toRealPath();
+            throw new IOException("Vulkan ICD manifest configured by icdFile was not found");
+        }
+        Path sibling = driver.getParent().resolve("nvk_icd.json");
+        if (Files.isRegularFile(sibling)) return sibling.toRealPath();
+        throw new IOException("NVK ICD manifest not found beside the driver. Set icdFile in nvk-bootstrap.properties.");
     }
 
     private static Path extract() throws Exception {
@@ -186,7 +251,7 @@ final class NvkBootstrap {
         System.err.println("[NVK-BOOTSTRAP] Ready: actual OpenGL/Vulkan calls select the route; loader=" + loader);
         try {
             Files.write(game.resolve(".nvk-bootstrap/last-start.properties"), (
-                    "routing=actual-api\nloader=" + loader + "\nruntime=" + runtime + "\ndriver=" + DRIVER + "\nphase=preLaunch-ready\n").getBytes(StandardCharsets.UTF_8));
+                    "routing=actual-api\nloader=" + loader + "\nruntime=" + runtime + "\ndriver=" + driverLibrary + "\nphase=preLaunch-ready\n").getBytes(StandardCharsets.UTF_8));
         } catch (IOException e) { System.err.println("[NVK-BOOTSTRAP] Could not write startup status: " + e); }
     }
 }

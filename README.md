@@ -4,7 +4,7 @@
 
 ## 环境需求
 
-- macOS x86_64、受支持的 NVIDIA GPU，以及已安装并运行的 NullMoth NVK 驱动。模组不会安装或替换系统驱动；Apple Silicon 未验证。
+- macOS x86_64、受支持的 NVIDIA GPU，以及已安装并运行的 NullMoth NVIDIA 驱动。默认搜索系统/用户 `Library/GPUBundles`；非标准路径可通过 `driverLibrary` 和 `icdFile` 配置。模组不会安装或替换系统驱动；Apple Silicon 未支持。
 - 游戏运行时：Forge 包最低 Java 8；Fabric / NeoForge 包最低 Java 17。仍须满足对应 Minecraft 版本自身的 Java 要求。
 - 构建环境：macOS Command Line Tools、带 `javac` 的 JDK 和 JNI 头文件。
 - 构建还需要官方加载器编译依赖，以及 Mesa EGL/Zink、Gallium 和 SDL3 动态库。源码仓库不包含这些下载或编译产物：加载器依赖放在 `vendor/compile/`，运行库放在 `vendor/payload/`。Mesa 来源、版本和补丁见 `notices/`。
@@ -26,7 +26,7 @@
 
 ## 构建教程
 
-1. 安装上述构建环境，并准备 `vendor/compile/` 中的 `modlauncher-8.1.3.jar`、`forge-legacy-api.jar`、`fml-loader-10.0.36.jar`，以及 `vendor/payload/` 中的 `libEGL.1.dylib`、`libgallium-26.3.0-devel.dylib`、`libSDL3_original.dylib`。启动器库目录还需含 Fabric Loader 0.20.0。
+1. 安装上述构建环境，并准备 `vendor/compile/` 中的 `modlauncher-8.1.3.jar`、`forge-legacy-api.jar`、`fml-loader-10.0.36.jar`，以及 `vendor/payload/` 中的 `libEGL.1.dylib`、`libgallium-26.3.0-devel.dylib`、`libSDL3_original.dylib`。
 2. 在项目根目录运行：
 
    ```sh
@@ -40,6 +40,8 @@
 
 3. 如仅重建加载器 JAR，且已有 `build/payload/` 原生文件，可运行 `python3 build.py --skip-native`。
 4. 输出位于 `dist/`：Fabric、Forge、NeoForge 三个 JAR 及 `SHA256SUMS`。
+
+预构建 JAR 与校验和见 [GitHub Release 0.3.0](https://github.com/Chengdong-Yu/Minecraft-NVK-for-macOS/releases/tag/v0.3.0)。
 
 ## 测试结果
 

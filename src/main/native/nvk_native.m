@@ -36,7 +36,8 @@ static pthread_once_t init_once = PTHREAD_ONCE_INIT;
 static _Atomic unsigned long graphics_pipelines, compute_pipelines, present_count;
 static void init_bridge(void) {
     audit_on=getenv("MC_GRAPHICS_AUDIT")&&strcmp(getenv("MC_GRAPHICS_AUDIT"),"0");
-    void *h = dlopen("/Library/GPUBundles/nvmtl/libvulkan_nouveau.dylib", RTLD_NOW | RTLD_LOCAL);
+    const char *driver_path = getenv("MC_NVK_DRIVER");
+    void *h = driver_path && driver_path[0] ? dlopen(driver_path, RTLD_NOW | RTLD_LOCAL) : NULL;
     if (h) {icd = (PFN_vkGetInstanceProcAddr)dlsym(h, "vk_icdGetInstanceProcAddr");stage_import=dlsym(h,"nvmtl_nvk_stage_import");surface_dirty=dlsym(h,"nvmtl_nvk_surface_dirty");}
     Dl_info route={0};if(icd&&dladdr((void*)icd,&route))fprintf(stderr,"[GRAPHICS-AUDIT] real Vulkan ICD: %s\n",route.dli_fname);
     fprintf(stderr, "[NVK-NATIVE] bridge loaded; real NVK ICD %s\n", icd ? "available" : "MISSING");
