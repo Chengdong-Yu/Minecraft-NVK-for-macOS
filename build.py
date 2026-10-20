@@ -27,9 +27,13 @@ def run(command):
 if not args.skip_native:
     src = ROOT / 'src/main/native'
     common = ['clang', '-dynamiclib', '-O2', '-Wall', '-Wextra', '-Wl,-headerpad_max_install_names']
+    run(['swiftc', '-emit-library', '-O', '-swift-version', '5', '-target', 'x86_64-apple-macos11.0', '-module-name', 'NvkCocoa',
+         src / 'CocoaBridge.swift', '-o', native / 'libNvkCocoa.dylib',
+         '-Xlinker', '-install_name', '-Xlinker', '@rpath/libNvkCocoa.dylib',
+         '-Xlinker', '-headerpad_max_install_names'])
     run(common + ['-I' + str(args.jni_home / 'include'), '-I' + str(args.jni_home / 'include/darwin'),
                   src / 'bootstrap.c', '-o', native / 'libNvkBootstrap.dylib'])
-    run(common + ['-I' + str(ROOT / 'vendor/Vulkan-Headers/include'), src / 'nvk_native.m',
+    run(common + ['-I' + str(ROOT / 'vendor/Vulkan-Headers/include'), src / 'nvk_native.c', native / 'libNvkCocoa.dylib',
                   '-framework', 'Cocoa', '-framework', 'QuartzCore', '-framework', 'IOSurface',
                   '-framework', 'ImageIO', '-o', native / 'libvulkan.1.dylib'])
 
@@ -41,7 +45,7 @@ if not args.skip_native:
     egl_override = '-D_GLFW_EGL_LIBRARY=(getenv("MC_EGL_LIBRARY") ? getenv("MC_EGL_LIBRARY") : "@loader_path/libEGL.1.dylib")'
     run(common + ['-D_GLFW_COCOA', egl_override, '-I' + str(glfw / 'include'),
                   '-I' + str(glfw / 'src'), '-I' + str(src)] +
-        [glfw / 'src' / name for name in names] + [src / 'glfw_zink_present.m',
+        [glfw / 'src' / name for name in names] + [src / 'glfw_zink_present.c',
                   '-framework', 'Cocoa', '-framework', 'IOKit', '-framework', 'CoreFoundation',
                   '-o', native / 'libglfwZink.dylib'])
 
@@ -52,11 +56,11 @@ if not args.skip_native:
     run(common + ['-I' + str(ROOT / 'vendor/EGL'), src / 'gl_zink.c', native / 'libEGL.1.dylib',
                   '-o', native / 'libGLZink.dylib'])
     run(common + ['-I' + str(args.jni_home / 'include'), '-I' + str(args.jni_home / 'include/darwin'),
-                  '-I' + str(ROOT / 'vendor/EGL'), '-I' + str(src), src / 'lwjgl2_zink.m',
-                  native / 'libEGL.1.dylib', '-framework', 'Cocoa', '-framework', 'QuartzCore',
+                  '-I' + str(ROOT / 'vendor/EGL'), '-I' + str(src), src / 'lwjgl2_zink.c',
+                  native / 'libEGL.1.dylib', native / 'libNvkCocoa.dylib', '-framework', 'Cocoa', '-framework', 'QuartzCore',
                   '-o', native / 'libLwjgl2Zink.dylib'])
-    run(common + ['-I' + str(ROOT / 'vendor/EGL'), '-I' + str(src), src / 'sdl_zink.m',
-                  native / 'libEGL.1.dylib', '-Wl,-reexport_library,' + str(native / 'libSDL3_original.dylib'),
+    run(common + ['-I' + str(ROOT / 'vendor/EGL'), '-I' + str(src), src / 'sdl_zink.c',
+                  native / 'libEGL.1.dylib', native / 'libNvkCocoa.dylib', '-Wl,-reexport_library,' + str(native / 'libSDL3_original.dylib'),
                   '-framework', 'Cocoa', '-framework', 'QuartzCore', '-o', native / 'libSDL3NVK.dylib'])
 
     for library in native.glob('*.dylib'):
@@ -115,10 +119,10 @@ for loader, profile in profiles.items():
     run([args.java_home / 'bin/javac', '--release', '8' if loader == 'forge' else '17', '-proc:none', '-Xlint:all',
          '-cp', os.pathsep.join(str(p) for p in profile['dependencies']), '-d', destination] +
         common_sources + profile['sources'])
-    jar = ROOT / ('dist/nvk-bootstrap-0.3.0-' + loader + '.jar')
+    jar = ROOT / ('dist/nvk-bootstrap-0.4.0-' + loader + '.jar')
     with zipfile.ZipFile(jar, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         legacy = 'FMLCorePlugin: local.nvk.legacy.NvkLoadingPlugin\n' if loader == 'forge' else ''
-        archive.writestr('META-INF/MANIFEST.MF', 'Manifest-Version: 1.0\nAutomatic-Module-Name: local.nvk.bootstrap\nFMLModType: LIBRARY\nImplementation-Version: 0.3.0\n' + legacy + '\n')
+        archive.writestr('META-INF/MANIFEST.MF', 'Manifest-Version: 1.0\nAutomatic-Module-Name: local.nvk.bootstrap\nFMLModType: LIBRARY\nImplementation-Version: 0.4.0\n' + legacy + '\n')
         for base, prefix in [(destination, ''), (profile['resources'], ''),
                              (build / 'payload', 'payload/'), (ROOT / 'notices', 'META-INF/notices/')]:
             for file in sorted(base.rglob('*')):

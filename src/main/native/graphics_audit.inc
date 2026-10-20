@@ -1,26 +1,13 @@
-#import <objc/runtime.h>
 static _Atomic unsigned long audit_readbacks,audit_large_readbacks;
 static _Atomic unsigned long audit_draws,audit_indexed,audit_indirect,audit_dispatches,audit_submits;
 static _Atomic unsigned long audit_metal_commit,audit_metal_render,audit_metal_compute,audit_metal_blit;
-static void audit_hook_encoder(Class cls,const char *name,_Atomic unsigned long *count,int argument){
-    SEL sel=sel_registerName(name);Method method=class_getInstanceMethod(cls,sel);if(!method)return;
-    IMP original=method_getImplementation(method),replacement;
-    if(argument==2)replacement=imp_implementationWithBlock(^id(id self,NSUInteger type){atomic_fetch_add(count,1);return ((id(*)(id,SEL,NSUInteger))original)(self,sel,type);});
-    else if(argument)replacement=imp_implementationWithBlock(^id(id self,id descriptor){atomic_fetch_add(count,1);return ((id(*)(id,SEL,id))original)(self,sel,descriptor);});
-    else replacement=imp_implementationWithBlock(^id(id self){atomic_fetch_add(count,1);return ((id(*)(id,SEL))original)(self,sel);});
-    class_replaceMethod(cls,sel,replacement,method_getTypeEncoding(method));
+static void audit_metal_hit(uint32_t kind){
+    switch(kind){case 0:audit_metal_commit++;break;case 1:audit_metal_render++;break;case 2:audit_metal_compute++;break;case 3:audit_metal_blit++;break;}
 }
 static void audit_install(void){
-    if(!audit_on)return;static int installed;
-    if(installed)return;Class cls=objc_getClass("NVMTLCommandBuffer");if(!cls)return;
-    SEL sel=sel_registerName("commit");Method method=class_getInstanceMethod(cls,sel);if(!method)return;
-    IMP original=method_getImplementation(method);
-    class_replaceMethod(cls,sel,imp_implementationWithBlock(^void(id self){atomic_fetch_add(&audit_metal_commit,1);((void(*)(id,SEL))original)(self,sel);}),method_getTypeEncoding(method));
-    audit_hook_encoder(cls,"renderCommandEncoderWithDescriptor:",&audit_metal_render,1);
-    audit_hook_encoder(cls,"computeCommandEncoder",&audit_metal_compute,0);
-    audit_hook_encoder(cls,"computeCommandEncoderWithDispatchType:",&audit_metal_compute,2);
-    audit_hook_encoder(cls,"blitCommandEncoder",&audit_metal_blit,0);
-    installed=1;fprintf(stderr,"[GRAPHICS-AUDIT] observing NVMTLCommandBuffer commit/render/compute/blit in this game process\n");
+    if(!audit_on)return;static int installed;if(installed)return;
+    installed=mc_cocoa_audit_install(audit_metal_hit);
+    if(installed)fprintf(stderr,"[GRAPHICS-AUDIT] Swift hooks observing NVMTLCommandBuffer commit/render/compute/blit\n");
 }
 static void audit_report(void){
     if(!audit_on)return;audit_install();

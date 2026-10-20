@@ -22,7 +22,7 @@ else:
  connection.close()
 records=[]
 for name,game,loader in targets:
- jar=root/('dist/nvk-bootstrap-0.3.0-'+loader+'.jar')
+ jar=root/('dist/nvk-bootstrap-0.4.0-'+loader+'.jar')
  if not jar.is_file():raise FileNotFoundError(jar)
  if not game.is_dir():raise NotADirectoryError(game)
  digest=hashlib.sha256(jar.read_bytes()).hexdigest();mods=game/'mods';mods.mkdir(exist_ok=True)
@@ -44,4 +44,4 @@ for name,game,loader in targets:
    config.write_text(after);changes.append(str(saved))
  temp=mods/(jar.name+'.part');shutil.copy2(jar,temp);temp.replace(mods/jar.name)
  records.append({'instance':name,'game_directory':str(game),'loader':loader,'jar':str(mods/jar.name),'sha256':digest,'backups':changes})
-p=root/'installation-0.3.0.json';p.write_text(json.dumps(records,ensure_ascii=False,indent=2));print(json.dumps(records,ensure_ascii=False,indent=2))
+p=root/'installation-0.4.0.json';p.write_text(json.dumps(records,ensure_ascii=False,indent=2));print(json.dumps(records,ensure_ascii=False,indent=2))

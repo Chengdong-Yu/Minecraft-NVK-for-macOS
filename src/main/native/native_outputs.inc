@@ -1,7 +1,6 @@
 static uint64_t now_ns(void){return clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW);}
 static void publish_surface(Surface*s,IOSurfaceRef surface){
-    [CATransaction begin];[CATransaction setDisableActions:YES];s->layer.contents=(id)surface;
-    s->layer.frame=s->container.bounds;[CATransaction commit];[CATransaction flush];
+    mc_cocoa_surface_publish(s->cocoa,surface);
 }
 static VkResult import_vram(Swapchain*s,NativeOutput*o){
     if(!s->owner->fd_import||!stage_import||!surface_dirty)return VK_ERROR_EXTENSION_NOT_PRESENT;
@@ -49,16 +48,13 @@ static VkResult native_outputs_create(Swapchain*s){
     for(unsigned i=0;i<s->output_count;i++){
         NativeOutput*o=&s->output[i];size_t pitch=((s->width*4+63)/64)*64;
         size_t size=((pitch*s->height+65535)/65536)*65536;
-        NSDictionary *desc=@{(id)kIOSurfaceWidth:@(s->width),(id)kIOSurfaceHeight:@(s->height),
-          (id)kIOSurfaceBytesPerElement:@4,(id)kIOSurfaceBytesPerRow:@(pitch),
-          (id)kIOSurfacePixelFormat:@((uint32_t)0x42475241),(id)kIOSurfaceAllocSize:@(size)};
-        o->surface=IOSurfaceCreate((CFDictionaryRef)desc);if(!o->surface)return VK_ERROR_OUT_OF_HOST_MEMORY;
+        o->surface=mc_cocoa_iosurface_create(s->width,s->height,pitch,size);if(!o->surface)return VK_ERROR_OUT_OF_HOST_MEMORY;
         o->pitch=IOSurfaceGetBytesPerRow(o->surface);o->size=IOSurfaceGetAllocSize(o->surface);
         // Bootstrap the IOSurface's driver cache through WindowServer once, not per frame.
         IOSurfaceLock(o->surface,0,NULL);uint32_t*base=IOSurfaceGetBaseAddress(o->surface);
         for(size_t n=0;n<o->size/4;n++)base[n]=0xff202020;IOSurfaceUnlock(o->surface,0,NULL);
         publish_surface(s->surface,o->surface);
-        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.04]];
+        mc_cocoa_runloop(0.04);
         VkResult vram=import_vram(s,o);
         if(vram!=VK_SUCCESS){VkResult host=import_host(s,o);
             fprintf(stderr,"[NVK-NATIVE] output %u surface %u: VRAM import %d; host import %d\n",i,IOSurfaceGetID(o->surface),vram,host);
@@ -70,7 +66,7 @@ static VkResult native_outputs_create(Swapchain*s){
     s->stats_start_ns=now_ns();return VK_SUCCESS;
 }
 static void native_outputs_destroy(Swapchain*s){
-    if(s->surface&&s->surface->layer.contents)publish_surface(s->surface,NULL);
+    if(s->surface)publish_surface(s->surface,NULL);
     if(s->fused_pool)R(DestroyDescriptorPool)(s->owner->device,s->fused_pool,NULL);
     for(unsigned i=0;i<s->count;i++)if(s->fused_views[i])R(DestroyImageView)(s->owner->device,s->fused_views[i],NULL);
     if(s->fused_sampler)R(DestroySampler)(s->owner->device,s->fused_sampler,NULL);
@@ -85,7 +81,7 @@ static NativeOutput* native_output_acquire(Swapchain*s,int *index){
     do {for(unsigned n=0;n<s->output_count;n++){unsigned i=(s->output_cursor+n)%s->output_count;NativeOutput*o=&s->output[i];
         if((int)i==s->current||IOSurfaceIsInUse(o->surface)||now_ns()-o->published_ns<s->recycle_delay_ns)continue;
         *index=i;s->output_cursor=(i+1)%s->output_count;return o;}
-        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.0002]];
+        mc_cocoa_runloop(0.0002);
     }while(now_ns()-start<2000000000ULL);
     return NULL;
 }

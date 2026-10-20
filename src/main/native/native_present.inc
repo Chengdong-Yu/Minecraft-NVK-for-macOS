@@ -1,14 +1,10 @@
 static void capture_native(Swapchain*s,NativeOutput*o,unsigned long frame){
-    const char *directory=getenv("MC_RENDER_CAPTURE_DIR");if(!directory||(frame!=120&&frame!=900&&frame!=1800&&frame!=3600))return;
+    const char *directory=getenv("MC_RENDER_CAPTURE_DIR");if(!directory)return;
+    static uint64_t started,last;uint64_t now=now_ns();if(!started)started=now;
+    uint64_t elapsed=now-started;if(elapsed<15000000000ULL||(elapsed-last<30000000000ULL&&last))return;last=elapsed;
     if(IOSurfaceLock(o->surface,kIOSurfaceLockReadOnly,NULL)!=kIOReturnSuccess)return;
-    CGColorSpaceRef space=CGColorSpaceCreateDeviceRGB();
-    CGDataProviderRef provider=CGDataProviderCreateWithData(NULL,IOSurfaceGetBaseAddress(o->surface),o->size,NULL);
-    CGImageRef image=CGImageCreate(s->width,s->height,8,32,o->pitch,space,kCGBitmapByteOrder32Little|kCGImageAlphaPremultipliedFirst,provider,NULL,false,kCGRenderingIntentDefault);
     char path[2048];snprintf(path,sizeof(path),"%s/native-%04lu.png",directory,frame);
-    NSURL *url=[NSURL fileURLWithPath:[NSString stringWithUTF8String:path]];
-    CGImageDestinationRef dest=CGImageDestinationCreateWithURL((CFURLRef)url,CFSTR("public.png"),1,NULL);
-    if(dest&&image){CGImageDestinationAddImage(dest,image,NULL);if(CGImageDestinationFinalize(dest))fprintf(stderr,"[NVK-NATIVE] frame capture %s\n",path);}
-    if(dest)CFRelease(dest);if(image)CGImageRelease(image);CGDataProviderRelease(provider);CGColorSpaceRelease(space);
+    if(mc_cocoa_capture(s->surface->cocoa,o->surface,s->width,s->height,o->pitch,o->size,path))fprintf(stderr,"[NVK-NATIVE] Swift frame capture %s\n",path);
     IOSurfaceUnlock(o->surface,kIOSurfaceLockReadOnly,NULL);
 }
 static void mark_vram_newest(Swapchain*s,NativeOutput*o){
@@ -21,7 +17,7 @@ static void mark_vram_newest(Swapchain*s,NativeOutput*o){
     CFDataRef data=CFDataCreate(NULL,(const UInt8*)&tag,sizeof(tag));IOSurfaceSetValue(o->surface,CFSTR("NVMTLVramAt:p0"),data);CFRelease(data);
     (void)s;
 }
-VKAPI_ATTR VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue queue,const VkPresentInfoKHR *info){@autoreleasepool{
+VKAPI_ATTR VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue queue,const VkPresentInfoKHR *info){
     audit_install();
     Queue*q=find_queue(queue);if(!q)return VK_ERROR_INITIALIZATION_FAILED;VkResult overall=VK_SUCCESS;
     for(unsigned k=0;k<info->swapchainCount;k++){
@@ -95,4 +91,4 @@ VKAPI_ATTR VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue queue,const VkPresentIn
         if(info->pResults)info->pResults[k]=VK_SUCCESS;
     }
     return overall;
-}}
+}

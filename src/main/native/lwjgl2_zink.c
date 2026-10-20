@@ -1,5 +1,4 @@
-#import <Cocoa/Cocoa.h>
-#import <QuartzCore/QuartzCore.h>
+#include "CocoaBridge.h"
 #include <jni.h>
 #include <EGL/egl.h>
 #define EGL_PLATFORM_SURFACELESS_MESA 0x31DD
@@ -11,19 +10,19 @@
 #include "mc_zink_image.h"
 
 /* Prefixes of LWJGL 2's macOS peer structures (LWJGL BSD license in notices). */
-typedef struct { NSWindow *window; NSRect rect; NSView *view; void *context; } LegacyWindow;
+typedef struct { void *window; struct { double x,y,width,height; } rect; void *view; void *context; } LegacyWindow;
 typedef struct {
     bool isCALayer, isWindowed;
     LegacyWindow *window;
-    id pixelFormat, pbuffer;
-    NSView *parent;
-    id glLayer;
+    void *pixelFormat, *pbuffer;
+    void *parent;
+    void *glLayer;
 } LegacyPeer;
 typedef struct {
     EGLContext context;
     EGLSurface surface;
     LegacyPeer *peer;
-    CALayer *layer;
+    void *layer;
     int width, height, interval;
 } LegacyContext;
 
@@ -42,12 +41,11 @@ static void fail(JNIEnv *env, const char *message) {
 static LegacyContext *context(JNIEnv *env,jobject handle) {
     return handle?(*env)->GetDirectBufferAddress(env,handle):NULL;
 }
-static NSView *view(LegacyContext *ctx) {
-    return ctx->peer&&ctx->peer->isWindowed&&ctx->peer->window?ctx->peer->window->view:ctx->peer?ctx->peer->parent:nil;
+static void *view(LegacyContext *ctx) {
+    return ctx->peer&&ctx->peer->isWindowed&&ctx->peer->window?ctx->peer->window->view:ctx->peer?ctx->peer->parent:NULL;
 }
 static void size(LegacyContext *ctx,int *w,int *h) {
-    NSView *v=view(ctx);NSRect rect=v?[v bounds]:NSMakeRect(0,0,854,480);
-    *w=MAX(1,(int)rect.size.width);*h=MAX(1,(int)rect.size.height);
+    mc_cocoa_view_size(view(ctx),w,h);
 }
 static int release_output(const MCZinkImage *image,void *layer) { (void)image;(void)layer;return present(NULL,NULL); }
 static void resize(LegacyContext *ctx) {
@@ -95,12 +93,8 @@ static jobject create(JNIEnv *env,jclass type,jobject peer,jobject shared) {
 }
 static void set_view(JNIEnv *env,jclass type,jobject peer,jobject handle) {
     (void)type;LegacyContext *ctx=context(env,handle);ctx->peer=(*env)->GetDirectBufferAddress(env,peer);
-    NSView *v=view(ctx);
-    if(v&&(!ctx->layer||ctx->layer!=[v layer])){
-        [v setWantsLayer:YES];CALayer *layer=[v layer];
-        [layer setContentsGravity:kCAGravityResize];[layer setContentsScale:1.0];
-        [ctx->layer release];ctx->layer=[layer retain];
-    }
+    void *layer=mc_cocoa_view_layer(view(ctx));
+    if(layer){mc_cocoa_release(ctx->layer);ctx->layer=layer;}
 }
 static void make_current(JNIEnv *env,jclass type,jobject handle) {
     (void)type;LegacyContext *ctx=context(env,handle);eglBindAPI(EGL_OPENGL_API);resize(ctx);
@@ -126,7 +120,7 @@ static void destroy(JNIEnv *env,jclass type,jobject handle) {
     (void)type;LegacyContext *ctx=context(env,handle);
     if(eglGetCurrentContext()==ctx->context){finish();publish(release_output,NULL);release_current(env,type);}
     eglDestroySurface(display,ctx->surface);eglDestroyContext(display,ctx->context);
-    [ctx->layer release];ctx->context=NULL;ctx->surface=NULL;ctx->layer=nil;
+    mc_cocoa_release(ctx->layer);ctx->context=NULL;ctx->surface=NULL;ctx->layer=NULL;
 }
 static jlong address(JNIEnv *env,jclass type,jlong name) { (void)env;(void)type;return (jlong)(uintptr_t)eglGetProcAddress((const char *)(uintptr_t)name); }
 static void library(JNIEnv *env,jclass type) { (void)env;(void)type; }

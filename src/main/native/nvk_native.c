@@ -1,8 +1,7 @@
 // Native NVK WSI: GPU writes directly into IOSurface memory; CALayer hands it to WindowServer.
-#import <Cocoa/Cocoa.h>
-#import <IOSurface/IOSurface.h>
-#import <QuartzCore/QuartzCore.h>
-#import <ImageIO/ImageIO.h>
+#include <IOSurface/IOSurface.h>
+#include <CoreGraphics/CoreGraphics.h>
+#include "CocoaBridge.h"
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan_core.h>
 #include <vulkan/vulkan_metal.h>
@@ -62,7 +61,7 @@ static Device devices[8]; static unsigned num_devices;
 typedef struct Queue { VkQueue queue; Device *device; uint32_t family; } Queue;
 static Queue queues[32]; static unsigned num_queues;
 typedef struct Surface {
-    CALayer *container,*layer;
+    void *cocoa;
 } Surface;
 enum {OUTPUT_COUNT=16};
 typedef struct { IOSurfaceRef surface; VkBuffer buffer; VkDeviceMemory memory; int mode; size_t pitch,size; uint64_t published_ns; VkDescriptorSet descriptor,fused_descriptors[4]; } NativeOutput;
@@ -158,16 +157,12 @@ VKAPI_ATTR void VKAPI_CALL vkGetDeviceQueue(VkDevice d,uint32_t family,uint32_t 
 VKAPI_ATTR void VKAPI_CALL vkGetDeviceQueue2(VkDevice d,const VkDeviceQueueInfo2 *info,VkQueue *out){R(GetDeviceQueue2)(d,info,out);Device*device=find_device(d);if(device)track_queue(device,*out,info->queueFamilyIndex);}
 
 VKAPI_ATTR VkResult VKAPI_CALL vkCreateMetalSurfaceEXT(VkInstance instance,const VkMetalSurfaceCreateInfoEXT *info,const VkAllocationCallbacks *alloc,VkSurfaceKHR *out) {
-    (void)instance;(void)alloc;@autoreleasepool {
+    (void)instance;(void)alloc;
     Surface*s=calloc(1,sizeof(*s));if(!s)return VK_ERROR_OUT_OF_HOST_MEMORY;
-    s->container=[(CALayer*)info->pLayer retain];s->layer=[[CALayer alloc] init];
-    s->layer.frame=s->container.bounds;s->layer.autoresizingMask=kCALayerWidthSizable|kCALayerHeightSizable;
-    s->layer.contentsGravity=kCAGravityResize;s->layer.opaque=YES;s->layer.contentsScale=s->container.contentsScale;
-    [CATransaction begin];[CATransaction setDisableActions:YES];[s->container addSublayer:s->layer];[CATransaction commit];
-    *out=(VkSurfaceKHR)(uintptr_t)s;fprintf(stderr,"[NVK-NATIVE] window container -> ordinary CALayer; no MTLDevice/MTLQueue/MTLDrawable\n");return VK_SUCCESS;
-    }
+    s->cocoa=mc_cocoa_surface_create(info->pLayer);if(!s->cocoa){free(s);return VK_ERROR_INITIALIZATION_FAILED;}
+    *out=(VkSurfaceKHR)(uintptr_t)s;fprintf(stderr,"[NVK-NATIVE] Swift Cocoa surface; ordinary CALayer; no MTLDevice/MTLQueue/MTLDrawable\n");return VK_SUCCESS;
 }
-VKAPI_ATTR void VKAPI_CALL vkDestroySurfaceKHR(VkInstance instance,VkSurfaceKHR surface,const VkAllocationCallbacks *alloc){(void)instance;(void)alloc;Surface*s=surface_ptr(surface);if(!s)return;[s->layer removeFromSuperlayer];[s->container release];[s->layer release];free(s);}
+VKAPI_ATTR void VKAPI_CALL vkDestroySurfaceKHR(VkInstance instance,VkSurfaceKHR surface,const VkAllocationCallbacks *alloc){(void)instance;(void)alloc;Surface*s=surface_ptr(surface);if(!s)return;mc_cocoa_surface_destroy(s->cocoa);free(s);}
 VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDeviceSurfaceSupportKHR(VkPhysicalDevice p,uint32_t family,VkSurfaceKHR surface,VkBool32 *out) {
     fprintf(stderr,"[NVK-NATIVE] surface support query family %u\n",family);
     (void)surface;uint32_t n=0;R(GetPhysicalDeviceQueueFamilyProperties)(p,&n,NULL);*out=VK_FALSE;
@@ -206,7 +201,7 @@ static void free_chain(Swapchain *s) {
 VKAPI_ATTR VkResult VKAPI_CALL vkCreateSwapchainKHR(VkDevice device,const VkSwapchainCreateInfoKHR *info,const VkAllocationCallbacks *alloc,VkSwapchainKHR *out) {
     report_backend("vulkan");
     fprintf(stderr,"[NVK-NATIVE] enter CreateSwapchain: %ux%u\n",info->imageExtent.width,info->imageExtent.height);
-    (void)alloc;@autoreleasepool {
+    (void)alloc;
     Device*d=find_device(device);if(!d||!info->surface)return VK_ERROR_INITIALIZATION_FAILED;
     if(info->imageArrayLayers!=1||info->minImageCount>3||!info->imageExtent.width||!info->imageExtent.height)return VK_ERROR_INITIALIZATION_FAILED;
     if(info->imageFormat!=VK_FORMAT_B8G8R8A8_UNORM&&info->imageFormat!=VK_FORMAT_B8G8R8A8_SRGB)return VK_ERROR_FORMAT_NOT_SUPPORTED;
@@ -234,7 +229,6 @@ VKAPI_ATTR VkResult VKAPI_CALL vkCreateSwapchainKHR(VkDevice device,const VkSwap
     *out=(VkSwapchainKHR)(uintptr_t)s;fprintf(stderr,"[NVK-NATIVE] swapchain %ux%u format %u images %u mode %u; NVK GPU direct writes -> IOSurface -> CALayer\n",s->width,s->height,s->format,s->count,s->present_mode);fprintf(stderr,"[NVK-NATIVE] output mode: %s\n",s->fused_present?"fused GPU sample + BGRA/alpha (one pass)":"GPU transfer + alpha (two passes)");return VK_SUCCESS;
 fail: free_chain(s);return result;
 #undef CTRY
-    }
 }
 VKAPI_ATTR void VKAPI_CALL vkDestroySwapchainKHR(VkDevice device,VkSwapchainKHR chain,const VkAllocationCallbacks *alloc) {
     (void)alloc;Swapchain*s=chain_ptr(chain);if(!s)return;R(DeviceWaitIdle)(device);
@@ -307,7 +301,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkSetDebugUtilsObjectTagEXT(VkDevice d,const VkDe
 }
 VKAPI_ATTR VkResult VKAPI_CALL vkGetDeviceGroupPresentCapabilitiesKHR(VkDevice d,VkDeviceGroupPresentCapabilitiesKHR *out){(void)d;memset(out->presentMask,0,sizeof(out->presentMask));out->presentMask[0]=1;out->modes=VK_DEVICE_GROUP_PRESENT_MODE_LOCAL_BIT_KHR;return VK_SUCCESS;}
 VKAPI_ATTR VkResult VKAPI_CALL vkGetDeviceGroupSurfacePresentModesKHR(VkDevice d,VkSurfaceKHR s,VkDeviceGroupPresentModeFlagsKHR *out){(void)d;(void)s;*out=VK_DEVICE_GROUP_PRESENT_MODE_LOCAL_BIT_KHR;return VK_SUCCESS;}
-VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDevicePresentRectanglesKHR(VkPhysicalDevice p,VkSurfaceKHR surface,uint32_t *count,VkRect2D *out){(void)p;if(!out){*count=1;return VK_SUCCESS;}if(!*count)return VK_INCOMPLETE;Surface*s=surface_ptr(surface);out[0]=(VkRect2D){.extent={(uint32_t)MAX(1,s->layer.bounds.size.width*s->layer.contentsScale),(uint32_t)MAX(1,s->layer.bounds.size.height*s->layer.contentsScale)}};*count=1;return VK_SUCCESS;}
+VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDevicePresentRectanglesKHR(VkPhysicalDevice p,VkSurfaceKHR surface,uint32_t *count,VkRect2D *out){(void)p;if(!out){*count=1;return VK_SUCCESS;}if(!*count)return VK_INCOMPLETE;Surface*s=surface_ptr(surface);out[0]=(VkRect2D){0};mc_cocoa_surface_size(s->cocoa,&out[0].extent.width,&out[0].extent.height);*count=1;return VK_SUCCESS;}
 
 static PFN_vkVoidFunction wrapper(const char *name) {
 #define W(n) if(!strcmp(name,"vk" #n))return (PFN_vkVoidFunction)vk##n

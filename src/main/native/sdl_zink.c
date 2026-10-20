@@ -1,5 +1,4 @@
-#import <Cocoa/Cocoa.h>
-#import <QuartzCore/QuartzCore.h>
+#include "CocoaBridge.h"
 #include <EGL/egl.h>
 #include <dlfcn.h>
 #include <stdbool.h>
@@ -16,7 +15,7 @@ typedef struct Context {
     SDL_Window *window;
     EGLContext context;
     EGLSurface surface;
-    CALayer *layer;
+    void *layer;
     int width, height, interval;
 } Context;
 static _Thread_local Context *current;
@@ -95,10 +94,10 @@ void *SDL_GL_CreateContext(SDL_Window *window) {
         if(c->context)eglDestroyContext(display,c->context);if(c->surface)eglDestroySurface(display,c->surface);free(c);return NULL;
     }
     SDL_PropertiesID props=ORIGINAL(SDL_GetWindowProperties,SDL_PropertiesID,(SDL_Window*))(window);
-    NSWindow *native=(NSWindow*)ORIGINAL(SDL_GetPointerProperty,void*,(SDL_PropertiesID,const char*,void*))(props,"SDL.window.cocoa.window",NULL);
-    NSView *view=[native contentView];[view setWantsLayer:YES];
-    if (!native||!view.layer) { error("Cannot access SDL Cocoa window");eglMakeCurrent(display,EGL_NO_SURFACE,EGL_NO_SURFACE,EGL_NO_CONTEXT);eglDestroyContext(display,c->context);eglDestroySurface(display,c->surface);free(c);return NULL; }
-    c->layer=[view.layer retain];current=c;
+    void *native=ORIGINAL(SDL_GetPointerProperty,void*,(SDL_PropertiesID,const char*,void*))(props,"SDL.window.cocoa.window",NULL);
+    c->layer=mc_cocoa_window_layer(native);
+    if (!c->layer) { error("Cannot access SDL Cocoa window");eglMakeCurrent(display,EGL_NO_SURFACE,EGL_NO_SURFACE,EGL_NO_CONTEXT);eglDestroyContext(display,c->context);eglDestroySurface(display,c->surface);free(c);return NULL; }
+    current=c;
     fprintf(stderr,"[NVK-SDL] Created OpenGL/Zink context %dx%d on ordinary Cocoa CALayer\n",c->width,c->height);
     return c;
 }
@@ -109,10 +108,10 @@ bool SDL_GL_MakeCurrent(SDL_Window *window,void *context) {
         current=c;
         if(c&&window&&window!=c->window) {
             SDL_PropertiesID props=ORIGINAL(SDL_GetWindowProperties,SDL_PropertiesID,(SDL_Window*))(window);
-            NSWindow *native=(NSWindow*)ORIGINAL(SDL_GetPointerProperty,void*,(SDL_PropertiesID,const char*,void*))(props,"SDL.window.cocoa.window",NULL);
-            NSView *view=[native contentView];[view setWantsLayer:YES];
-            if(!view.layer)return error("Cannot bind new SDL Cocoa window");
-            [c->layer release];c->layer=[view.layer retain];c->window=window;
+            void *native=ORIGINAL(SDL_GetPointerProperty,void*,(SDL_PropertiesID,const char*,void*))(props,"SDL.window.cocoa.window",NULL);
+            void *layer=mc_cocoa_window_layer(native);
+            if(!layer)return error("Cannot bind new SDL Cocoa window");
+            mc_cocoa_release(c->layer);c->layer=layer;c->window=window;
             fprintf(stderr,"[NVK-SDL] Rebound OpenGL/Zink context to game window\n");
         }
     }
@@ -141,7 +140,7 @@ bool SDL_GL_SwapWindow(SDL_Window *window) {
 bool SDL_GL_DestroyContext(void *context) {
     Context *c=context;if(!c)return true;
     if(current==c){if(present&&publish)publish(release,NULL);eglMakeCurrent(display,EGL_NO_SURFACE,EGL_NO_SURFACE,EGL_NO_CONTEXT);current=NULL;}
-    eglDestroyContext(display,c->context);eglDestroySurface(display,c->surface);[c->layer release];free(c);return true;
+    eglDestroyContext(display,c->context);eglDestroySurface(display,c->surface);mc_cocoa_release(c->layer);free(c);return true;
 }
 bool SDL_GL_ExtensionSupported(const char *extension) {
     const unsigned char *(*getString)(unsigned)=(void*)eglGetProcAddress("glGetString");

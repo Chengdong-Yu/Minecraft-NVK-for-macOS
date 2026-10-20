@@ -1,6 +1,5 @@
 #include "internal.h"
 #include "mc_zink_image.h"
-#import <Cocoa/Cocoa.h>
 #include <dlfcn.h>
 #include <stdio.h>
 #include <stdlib.h>
