@@ -43,7 +43,7 @@
 3. 如仅重建加载器 JAR，且已有 `build/payload/` 原生文件，可运行 `python3 build.py --skip-native`。
 4. 输出位于 `dist/`：Fabric、Forge、NeoForge 三个 JAR 及 `SHA256SUMS`。
 
-已发布的历史 JAR 与校验和见 [GitHub Release 0.3.0](https://github.com/Chengdong-Yu/Minecraft-NVK-for-macOS/releases/tag/v0.3.0)。
+预构建 JAR 与校验和见 [GitHub Release 0.4.0](https://github.com/Chengdong-Yu/Minecraft-NVK-for-macOS/releases/tag/v0.4.0)。
 
 ## 测试结果
 
